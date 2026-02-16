@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { getTutorResponseStream, getTutorSpeech, playAudioBase64 } from '../services/gemini';
+import { getTutorResponseStream, getTutorSpeech, playAudioBase64, syncStopAudio } from '../services/gemini';
 import { Course, JournalEntry } from '../types';
 
 interface BoardItem {
@@ -25,24 +25,17 @@ const LectureHall: React.FC<LectureHallProps> = ({ studyTopic, onJournalEntry, o
   const lastTopic = useRef<string | null>(null);
   const audioQueue = useRef<string[]>([]);
   const isPlayingAudio = useRef(false);
-  const currentAudioSource = useRef<AudioBufferSourceNode | null>(null);
 
   useEffect(() => {
     if (studyTopic && studyTopic !== lastTopic.current) {
       lastTopic.current = studyTopic;
       startStreamingLecture(studyTopic);
     }
-    return () => stopAllSpeech();
+    return () => {
+      syncStopAudio();
+      audioQueue.current = [];
+    };
   }, [studyTopic]);
-
-  const stopAllSpeech = () => {
-    if (currentAudioSource.current) {
-      try { currentAudioSource.current.stop(); } catch (e) {}
-    }
-    audioQueue.current = [];
-    isPlayingAudio.current = false;
-    setIsSpeaking(false);
-  };
 
   const processAudioQueue = async () => {
     if (isPlayingAudio.current || audioQueue.current.length === 0) return;
@@ -56,11 +49,8 @@ const LectureHall: React.FC<LectureHallProps> = ({ studyTopic, onJournalEntry, o
       const result = await getTutorSpeech(nextText);
       if (result?.audioData) {
         const source = await playAudioBase64(result.audioData);
-        currentAudioSource.current = source;
-        
         source.onended = () => {
           isPlayingAudio.current = false;
-          currentAudioSource.current = null;
           if (audioQueue.current.length === 0) {
             setIsSpeaking(false);
           }
@@ -77,7 +67,8 @@ const LectureHall: React.FC<LectureHallProps> = ({ studyTopic, onJournalEntry, o
   };
 
   const startStreamingLecture = async (topic: string) => {
-    stopAllSpeech();
+    syncStopAudio();
+    audioQueue.current = [];
     setIsTeaching(true);
     setBoardItems([]);
     setActiveIdx(-1);
