@@ -45,6 +45,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
 
   const processAudioQueue = async () => {
     if (isPlayingAudio.current || audioQueue.current.length === 0) return;
+    
     isPlayingAudio.current = true;
     setIsSpeaking(true);
 
@@ -55,6 +56,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
         const source = await playAudioBase64(speechResult.audioData);
         source.onended = () => {
           isPlayingAudio.current = false;
+          if (audioQueue.current.length === 0) setIsSpeaking(false);
           processAudioQueue();
         };
       } else {
@@ -71,8 +73,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
     const textToSend = messageText || input;
     if (!textToSend.trim() || isLoading) return;
 
+    // Interrupt previous voice only on new user action
     syncStopAudio();
     audioQueue.current = [];
+    isPlayingAudio.current = false;
+
     if (!messageText) setInput('');
     setMessages(prev => [...prev, { role: 'user', content: textToSend, timestamp: Date.now() }]);
     setIsLoading(true);
@@ -89,7 +94,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
     await getTutorResponseStream(textToSend, history, async (chunk) => {
       fullText += chunk;
       
-      // Filter out technical commands from the display text
       const cleanDisplay = fullText.replace(/\[ADD_COURSE:[\s\S]*?\]/, '').trim();
       setCurrentModelText(cleanDisplay);
 
@@ -99,16 +103,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
       if (potentialSentences.length > 1) {
         for (let i = 0; i < potentialSentences.length - 1; i++) {
           const sentence = potentialSentences[i].trim();
-          if (sentence.length > 3 && voiceEnabled) {
+          if (sentence.length > 2 && voiceEnabled) {
             audioQueue.current.push(sentence);
-            processAudioQueue();
+            if (!isPlayingAudio.current) processAudioQueue();
           }
           lastSentenceEnd += potentialSentences[i].length + 1;
         }
       }
     });
 
-    // Check for ADD_COURSE command in the final response
+    // Handle any leftover text at end of stream
+    const finalDisplay = fullText.replace(/\[ADD_COURSE:[\s\S]*?\]/, '').trim();
+    const finalSpeechText = finalDisplay.substring(lastSentenceEnd).trim();
+    if (finalSpeechText.length > 0 && voiceEnabled) {
+      audioQueue.current.push(finalSpeechText);
+      if (!isPlayingAudio.current) processAudioQueue();
+    }
+
     const addCourseMatch = fullText.match(/\[ADD_COURSE: (\{[\s\S]*?\})\]/);
     if (addCourseMatch) {
       try {
@@ -118,14 +129,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
           ...courseData
         });
         if (onCurriculumLoad) onCurriculumLoad();
-      } catch (e) {
-        console.error("Failed to parse dynamic course:", e);
-      }
+      } catch (e) {}
     }
 
     setMessages(prev => [...prev, { 
       role: 'model', 
-      content: fullText.replace(/\[ADD_COURSE:[\s\S]*?\]/, '').trim(), 
+      content: finalDisplay, 
       timestamp: Date.now() 
     }]);
     setCurrentModelText('');
@@ -146,7 +155,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
           </div>
           <div>
             <h2 className="lovely-font text-2xl sm:text-3xl tracking-tight leading-none">Auntie's Warmth</h2>
-            <p className="text-[8px] sm:text-[9px] text-rose-100 font-black uppercase tracking-[0.3em] mt-2">Love & Care for Ophelia</p>
+            <p className="text-[8px] sm:text-[9px] text-rose-100 font-black uppercase tracking-[0.3em] mt-2">Personalized Care for Ophelia</p>
           </div>
         </div>
         <button 
@@ -175,7 +184,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
               {msg.role === 'model' && (
                 <div className="mt-4 pt-4 border-t border-rose-50 flex items-center gap-2">
                   <i className="fas fa-heart text-[8px] text-rose-300 animate-pulse"></i>
-                  <span className="text-[8px] font-black uppercase tracking-widest text-rose-300 italic">Sent with Auntie's Love</span>
+                  <span className="text-[8px] font-black uppercase tracking-widest text-rose-300 italic">Sent with Motherly Love</span>
                 </div>
               )}
             </div>
@@ -183,7 +192,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
         ))}
         {currentModelText && (
           <div className="flex justify-start">
-            <div className="max-w-[85%] sm:max-w-[80%] p-6 sm:p-8 bg-white text-slate-700 rounded-[3.5rem] rounded-tl-none border-rose-50 border-l-[6px] border-l-rose-400 shadow-sm">
+            <div className="max-w-[85%] sm:max-w-[80%] p-6 sm:p-8 bg-white text-slate-700 rounded-[3.5rem] rounded-tl-none border-rose-50 border-l-[6px] border-l-rose-400 shadow-sm animate-in fade-in slide-in-from-left-2 duration-300">
               <div className="whitespace-pre-wrap font-medium">{currentModelText}</div>
             </div>
           </div>
@@ -192,7 +201,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
           <div className="flex justify-start">
             <div className="bg-white border border-rose-100 p-5 rounded-3xl rounded-tl-none flex items-center gap-4 shadow-sm">
               <i className="fas fa-heart text-rose-500 animate-heart"></i>
-              <p className="lovely-font text-rose-400 text-lg">Auntie is preparing your lesson, my love...</p>
+              <p className="lovely-font text-rose-400 text-lg">Auntie is preparing your words, my love...</p>
             </div>
           </div>
         )}
@@ -210,9 +219,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
           />
           <button 
             onClick={() => handleSend()}
-            className="w-16 h-16 bg-gradient-to-tr from-rose-500 to-pink-600 text-white rounded-[1.8rem] hover:scale-110 active:scale-95 transition-all shadow-xl shadow-rose-200 flex items-center justify-center group"
+            disabled={isLoading || !input.trim()}
+            className={`w-16 h-16 rounded-[1.8rem] transition-all shadow-xl flex items-center justify-center group ${isLoading || !input.trim() ? 'bg-slate-100 text-slate-300' : 'bg-gradient-to-tr from-rose-500 to-pink-600 text-white hover:scale-110 active:scale-95 shadow-rose-200'}`}
           >
-            <i className="fas fa-paper-plane text-2xl group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform"></i>
+            <i className={`fas ${isLoading ? 'fa-spinner fa-spin' : 'fa-paper-plane'} text-2xl group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform`}></i>
           </button>
         </div>
       </div>
