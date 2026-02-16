@@ -23,7 +23,7 @@ export const getTutorResponseStream = async (userMessage: string, history: { rol
 
     let fullText = "";
     for await (const chunk of result) {
-      const chunkText = chunk.text;
+      const chunkText = chunk.text || "";
       fullText += chunkText;
       onChunk(chunkText);
     }
@@ -57,7 +57,7 @@ export const getTutorResponse = async (
   });
 
   return { 
-    text: response.text,
+    text: response.text || "",
     grounding: response.candidates?.[0]?.groundingMetadata?.groundingChunks
   };
 };
@@ -77,7 +77,6 @@ export const getTutorSpeech = async (text: string) => {
   if (!cleanText) return null;
 
   try {
-    // 'Kore' is the primary high-quality Lady voice for Auntie Efua
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
       contents: [{ parts: [{ text: cleanText }] }],
@@ -97,17 +96,15 @@ export const getTutorSpeech = async (text: string) => {
     if (audioData) return { audioData };
     throw new Error("TTS Fail");
   } catch (error) {
-    // Fallback: Force a feminine lady voice on the local OS if the API fails
     if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.cancel(); // Clear previous speech
+      window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(cleanText);
       const voices = window.speechSynthesis.getVoices();
-      // Try to find a female voice
       const femaleVoice = voices.find(v => v.name.includes('Female') || v.name.includes('Google UK English Female') || v.name.includes('Samantha'));
       if (femaleVoice) utterance.voice = femaleVoice;
       
       utterance.rate = 1.1; 
-      utterance.pitch = 1.4; // High pitch for feminine "Lady" persona
+      utterance.pitch = 1.4;
       window.speechSynthesis.speak(utterance);
     }
     return null;
