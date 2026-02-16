@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { getTutorResponseStream, getTutorSpeech, playAudioBase64 } from '../services/gemini';
+import { getTutorResponseStream, getTutorSpeech, playAudioBase64, syncStopAudio } from '../services/gemini';
 import { ChatMessage } from '../types';
 
 interface ExtendedChatMessage extends ChatMessage {
@@ -25,12 +25,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
   const scrollRef = useRef<HTMLDivElement>(null);
   const audioQueue = useRef<string[]>([]);
   const isPlayingAudio = useRef(false);
-  const currentAudioSource = useRef<AudioBufferSourceNode | null>(null);
 
   useEffect(() => {
     if (prefillMessage && !isLoading) {
       handleSend(prefillMessage);
     }
+    return () => {
+      syncStopAudio();
+      audioQueue.current = [];
+    };
   }, [prefillMessage]);
 
   useEffect(() => {
@@ -38,17 +41,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, currentModelText]);
-
-  const stopAllAudio = () => {
-    if (currentAudioSource.current) {
-      try { currentAudioSource.current.stop(); } catch(e) {}
-      currentAudioSource.current = null;
-    }
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
-    audioQueue.current = [];
-    isPlayingAudio.current = false;
-    setIsSpeaking(false);
-  };
 
   const processAudioQueue = async () => {
     if (isPlayingAudio.current || audioQueue.current.length === 0) return;
@@ -60,10 +52,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
       const speechResult = await getTutorSpeech(nextText);
       if (speechResult?.audioData) {
         const source = await playAudioBase64(speechResult.audioData);
-        currentAudioSource.current = source;
         source.onended = () => {
           isPlayingAudio.current = false;
-          currentAudioSource.current = null;
           processAudioQueue();
         };
       } else {
@@ -80,7 +70,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
     const textToSend = messageText || input;
     if (!textToSend.trim() || isLoading) return;
 
-    stopAllAudio();
+    syncStopAudio();
+    audioQueue.current = [];
     if (!messageText) setInput('');
     setMessages(prev => [...prev, { role: 'user', content: textToSend, timestamp: Date.now() }]);
     setIsLoading(true);
@@ -98,8 +89,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
       fullText += chunk;
       setCurrentModelText(fullText);
 
-      // Sentence level splitting for instant speech
-      const potentialSentences = fullText.substring(lastSentenceEnd).split(/(?<=[.!?])\s+/);
+      const currentSpeechText = fullText.substring(lastSentenceEnd);
+      const potentialSentences = currentSpeechText.split(/(?<=[.!?])\s+/);
+      
       if (potentialSentences.length > 1) {
         for (let i = 0; i < potentialSentences.length - 1; i++) {
           const sentence = potentialSentences[i].trim();
@@ -140,7 +132,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
         </div>
         <button 
           onClick={() => {
-            if (voiceEnabled) stopAllAudio();
+            syncStopAudio();
+            audioQueue.current = [];
             setVoiceEnabled(!voiceEnabled);
           }}
           className={`w-12 h-12 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center transition-all ${
