@@ -4,7 +4,7 @@ import { SYSTEM_INSTRUCTION } from "../constants";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-// Global Audio State to prevent overlapping
+// Global Audio State to manage playback context
 let globalAudioContext: AudioContext | null = null;
 let currentSource: AudioBufferSourceNode | null = null;
 
@@ -12,13 +12,18 @@ const getAudioContext = () => {
   if (!globalAudioContext) {
     globalAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
   }
+  if (globalAudioContext.state === 'suspended') {
+    globalAudioContext.resume();
+  }
   return globalAudioContext;
 };
 
+// Only call this when explicitly interrupting the AI (e.g. new user message)
 export const syncStopAudio = () => {
   if (currentSource) {
     try {
       currentSource.stop();
+      currentSource.onended = null;
       currentSource.disconnect();
     } catch (e) {}
     currentSource = null;
@@ -40,8 +45,8 @@ export const getTutorResponseStream = async (userMessage: string, history: { rol
       contents: contents,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.9,
-        topP: 0.95,
+        temperature: 0.85,
+        topP: 0.9,
       },
     });
 
@@ -89,19 +94,19 @@ export const getTutorResponse = async (
 const sanitizeForTTS = (text: string): string => {
   return text
     .replace(/[#*_~`\[\]()]/g, '') 
-    .replace(/\[PAUSE\]/g, '')     
-    .replace(/\[SEGMENT\]/g, '')
+    .replace(/\[PAUSE\]/g, ', ')     
+    .replace(/\[SEGMENT\]/g, '. ')
     .replace(/BEGIN_BOARD[\s\S]*?END_BOARD/g, '')
+    .replace(/\[ADD_COURSE:[\s\S]*?\]/g, '')
     .replace(/\s+/g, ' ')          
     .trim();
 };
 
 export const getTutorSpeech = async (text: string) => {
   const cleanText = sanitizeForTTS(text);
-  if (!cleanText) return null;
+  if (!cleanText || cleanText.length < 2) return null;
 
   try {
-    // Force Kore: The warm female voice
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
       contents: [{ parts: [{ text: cleanText }] }],
@@ -121,28 +126,20 @@ export const getTutorSpeech = async (text: string) => {
     if (audioData) return { audioData };
     throw new Error("TTS Fail");
   } catch (error) {
-    // Hard-filter for Female Voices in the browser
     if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(cleanText);
       const voices = window.speechSynthesis.getVoices();
       
-      // Strict Female preference
       const femaleVoice = voices.find(v => 
         (v.name.includes('Female') || 
          v.name.includes('Google UK English Female') || 
-         v.name.includes('Samantha') || 
-         v.name.includes('Victoria') || 
-         v.name.includes('Karen')) && 
+         v.name.includes('Samantha')) && 
         v.lang.startsWith('en')
       );
       
-      if (femaleVoice) {
-        utterance.voice = femaleVoice;
-      }
-      
-      utterance.rate = 1.2; // Faster motherly pace
-      utterance.pitch = 1.3; // Higher feminine pitch
+      if (femaleVoice) utterance.voice = femaleVoice;
+      utterance.rate = 1.15;
+      utterance.pitch = 1.2;
       window.speechSynthesis.speak(utterance);
     }
     return null;
@@ -150,8 +147,6 @@ export const getTutorSpeech = async (text: string) => {
 };
 
 export async function playAudioBase64(base64Data: string) {
-  syncStopAudio(); // Ensure nothing else is playing
-  
   const ctx = getAudioContext();
   const binaryString = atob(base64Data);
   const bytes = new Uint8Array(binaryString.length);
