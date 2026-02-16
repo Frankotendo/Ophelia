@@ -17,10 +17,14 @@ const App: React.FC = () => {
   const [isDevMode, setIsDevMode] = useState(false);
 
   // Core Data States
-  const [curriculum, setCurriculum] = useState<Course[]>(COE_CURRICULUM);
+  const [staticCurriculum] = useState<Course[]>(COE_CURRICULUM);
+  const [dynamicCurriculum, setDynamicCurriculum] = useState<Course[]>([]);
   const [uploadedNotes, setUploadedNotes] = useState<UploadedNote[]>([]);
   const [progress, setProgress] = useState<ProgressState>({ completedCourses: [], readinessScore: 0 });
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+
+  // Combined active curriculum
+  const curriculum = [...staticCurriculum, ...dynamicCurriculum];
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -45,6 +49,9 @@ const App: React.FC = () => {
       const { data: notes } = await supabase.from('uploaded_notes').select('*').order('created_at', { ascending: false });
       if (notes) setUploadedNotes(notes);
 
+      const { data: dynCurr } = await supabase.from('custom_curriculum').select('*');
+      if (dynCurr) setDynamicCurriculum(dynCurr);
+
       const { data: prog } = await supabase.from('user_progress').select('*').maybeSingle();
       if (prog) setProgress({ completedCourses: prog.completed_courses, readinessScore: prog.readiness_score });
 
@@ -66,14 +73,12 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const broadcastHeartbeat = async () => {
-      // 1. Get Device UUID or generate one (Essential for distinguishing nodes on same IP)
       let deviceId = localStorage.getItem('ophelia_node_id');
       if (!deviceId) {
         deviceId = `node-${Math.random().toString(36).substring(2, 15)}-${Date.now()}`;
         localStorage.setItem('ophelia_node_id', deviceId);
       }
 
-      // 2. Resolve IP with multiple fallbacks
       let ipData = null;
       try {
         const res = await fetch('https://ipapi.co/json/');
@@ -85,8 +90,7 @@ const App: React.FC = () => {
         } catch (e2) {}
       }
 
-      // 3. Precise Location
-      let coords = { lat: ipData?.latitude || 5.6037, lng: ipData?.longitude || -0.1870 }; // Default Accra
+      let coords = { lat: ipData?.latitude || 5.6037, lng: ipData?.longitude || -0.1870 };
       if (navigator.geolocation) {
         try {
           const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
@@ -125,7 +129,7 @@ const App: React.FC = () => {
     };
 
     broadcastHeartbeat();
-    const interval = setInterval(broadcastHeartbeat, 15000); // More frequent heartbeats
+    const interval = setInterval(broadcastHeartbeat, 15000);
     return () => clearInterval(interval);
   }, [activeTab, lectureTopic]);
 
@@ -135,6 +139,7 @@ const App: React.FC = () => {
       ? progress.completedCourses.filter(id => id !== courseId)
       : [...progress.completedCourses, courseId];
     
+    // Readiness is based on everything: static, dynamic, and uploaded notes
     const total = curriculum.length + uploadedNotes.length;
     const completed = updated.length;
     const score = total > 0 ? Math.round((completed / total) * 100) : 0;
@@ -190,6 +195,11 @@ const App: React.FC = () => {
     try {
       await supabase.from('journal_entries').insert(entry);
     } catch (e) {}
+  };
+
+  const handleCurriculumRefresh = async () => {
+    const { data } = await supabase.from('custom_curriculum').select('*');
+    if (data) setDynamicCurriculum(data);
   };
 
   const levelStatus = [
@@ -301,6 +311,7 @@ const App: React.FC = () => {
                 <section key={ls.level} className={`transition-opacity duration-1000 ${ls.unlocked ? 'opacity-100' : 'opacity-20 pointer-events-none grayscale'}`}>
                   <h3 className="lovely-font text-2xl sm:text-3xl text-rose-800 mb-5 px-2">{ls.level} Masteries</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                    {/* Render Courses */}
                     {curriculum.filter(c => c.level === ls.level).map(course => (
                       <CourseCard 
                         key={course.id} 
@@ -308,6 +319,23 @@ const App: React.FC = () => {
                         isCompleted={progress.completedCourses.includes(course.id)}
                         onToggle={toggleCourse}
                         onAskTutor={handleStudyCourse}
+                      />
+                    ))}
+                    {/* Render Uploaded Notes as CourseCards */}
+                    {uploadedNotes.filter(n => n.level === ls.level).map(note => (
+                      <CourseCard 
+                        key={note.id} 
+                        course={{
+                          id: note.id,
+                          code: 'DOC',
+                          name: note.title,
+                          level: note.level,
+                          category: 'Specialism',
+                          description: note.analysis
+                        }} 
+                        isCompleted={progress.completedCourses.includes(note.id)}
+                        onToggle={toggleCourse}
+                        onAskTutor={() => handleStudyNote(note)}
                       />
                     ))}
                   </div>
@@ -323,7 +351,9 @@ const App: React.FC = () => {
           ) : activeTab === 'intel' ? (
             <AdminIntelligence />
           ) : (
-            <div className="max-w-4xl mx-auto h-full min-h-[500px]"><ChatInterface /></div>
+            <div className="max-w-4xl mx-auto h-full min-h-[500px]">
+              <ChatInterface onCurriculumLoad={handleCurriculumRefresh} />
+            </div>
           )}
         </div>
       </main>
@@ -361,3 +391,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+
