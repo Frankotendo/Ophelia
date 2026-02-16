@@ -4,6 +4,30 @@ import { SYSTEM_INSTRUCTION } from "../constants";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
+// Global Audio State to prevent overlapping
+let globalAudioContext: AudioContext | null = null;
+let currentSource: AudioBufferSourceNode | null = null;
+
+const getAudioContext = () => {
+  if (!globalAudioContext) {
+    globalAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+  }
+  return globalAudioContext;
+};
+
+export const syncStopAudio = () => {
+  if (currentSource) {
+    try {
+      currentSource.stop();
+      currentSource.disconnect();
+    } catch (e) {}
+    currentSource = null;
+  }
+  if (window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+};
+
 export const getTutorResponseStream = async (userMessage: string, history: { role: 'user' | 'model', parts: { text: string }[] }[], onChunk: (text: string) => void) => {
   try {
     const contents = [
@@ -77,6 +101,7 @@ export const getTutorSpeech = async (text: string) => {
   if (!cleanText) return null;
 
   try {
+    // Force Kore: The warm female voice
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
       contents: [{ parts: [{ text: cleanText }] }],
@@ -96,15 +121,28 @@ export const getTutorSpeech = async (text: string) => {
     if (audioData) return { audioData };
     throw new Error("TTS Fail");
   } catch (error) {
+    // Hard-filter for Female Voices in the browser
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(cleanText);
       const voices = window.speechSynthesis.getVoices();
-      const femaleVoice = voices.find(v => v.name.includes('Female') || v.name.includes('Google UK English Female') || v.name.includes('Samantha'));
-      if (femaleVoice) utterance.voice = femaleVoice;
       
-      utterance.rate = 1.1; 
-      utterance.pitch = 1.4;
+      // Strict Female preference
+      const femaleVoice = voices.find(v => 
+        (v.name.includes('Female') || 
+         v.name.includes('Google UK English Female') || 
+         v.name.includes('Samantha') || 
+         v.name.includes('Victoria') || 
+         v.name.includes('Karen')) && 
+        v.lang.startsWith('en')
+      );
+      
+      if (femaleVoice) {
+        utterance.voice = femaleVoice;
+      }
+      
+      utterance.rate = 1.2; // Faster motherly pace
+      utterance.pitch = 1.3; // Higher feminine pitch
       window.speechSynthesis.speak(utterance);
     }
     return null;
@@ -112,19 +150,24 @@ export const getTutorSpeech = async (text: string) => {
 };
 
 export async function playAudioBase64(base64Data: string) {
-  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+  syncStopAudio(); // Ensure nothing else is playing
+  
+  const ctx = getAudioContext();
   const binaryString = atob(base64Data);
   const bytes = new Uint8Array(binaryString.length);
   for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
   
   const dataInt16 = new Int16Array(bytes.buffer);
-  const buffer = audioContext.createBuffer(1, dataInt16.length, 24000);
+  const buffer = ctx.createBuffer(1, dataInt16.length, 24000);
   const channelData = buffer.getChannelData(0);
   for (let i = 0; i < dataInt16.length; i++) channelData[i] = dataInt16[i] / 32768.0;
 
-  const source = audioContext.createBufferSource();
+  const source = ctx.createBufferSource();
   source.buffer = buffer;
-  source.connect(audioContext.destination);
+  source.connect(ctx.destination);
+  
+  currentSource = source;
   source.start();
+  
   return source;
 }
