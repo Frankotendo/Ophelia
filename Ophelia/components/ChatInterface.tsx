@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { getTutorResponseStream, getTutorSpeech, playAudioBase64, syncStopAudio } from '../services/gemini';
 import { ChatMessage } from '../types';
+import { supabase } from '../services/supabase';
 
 interface ExtendedChatMessage extends ChatMessage {
   grounding?: any[];
@@ -9,7 +10,7 @@ interface ExtendedChatMessage extends ChatMessage {
 
 interface ChatInterfaceProps {
   prefillMessage?: string;
-  onCurriculumLoad?: (newCurriculum: any[]) => void;
+  onCurriculumLoad?: () => void;
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurriculumLoad }) => {
@@ -85,11 +86,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
     let fullText = "";
     let lastSentenceEnd = 0;
 
-    await getTutorResponseStream(textToSend, history, (chunk) => {
+    await getTutorResponseStream(textToSend, history, async (chunk) => {
       fullText += chunk;
-      setCurrentModelText(fullText);
+      
+      // Filter out technical commands from the display text
+      const cleanDisplay = fullText.replace(/\[ADD_COURSE:[\s\S]*?\]/, '').trim();
+      setCurrentModelText(cleanDisplay);
 
-      const currentSpeechText = fullText.substring(lastSentenceEnd);
+      const currentSpeechText = cleanDisplay.substring(lastSentenceEnd);
       const potentialSentences = currentSpeechText.split(/(?<=[.!?])\s+/);
       
       if (potentialSentences.length > 1) {
@@ -104,9 +108,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ prefillMessage, onCurricu
       }
     });
 
+    // Check for ADD_COURSE command in the final response
+    const addCourseMatch = fullText.match(/\[ADD_COURSE: (\{[\s\S]*?\})\]/);
+    if (addCourseMatch) {
+      try {
+        const courseData = JSON.parse(addCourseMatch[1]);
+        await supabase.from('custom_curriculum').insert({
+          id: `dyn-${Date.now()}`,
+          ...courseData
+        });
+        if (onCurriculumLoad) onCurriculumLoad();
+      } catch (e) {
+        console.error("Failed to parse dynamic course:", e);
+      }
+    }
+
     setMessages(prev => [...prev, { 
       role: 'model', 
-      content: fullText.replace(/\[CURRICULUM_DATA_START\][\s\S]*?\[CURRICULUM_DATA_END\]/, ''), 
+      content: fullText.replace(/\[ADD_COURSE:[\s\S]*?\]/, '').trim(), 
       timestamp: Date.now() 
     }]);
     setCurrentModelText('');
