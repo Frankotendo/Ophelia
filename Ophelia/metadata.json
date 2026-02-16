@@ -1,9 +1,0 @@
-{
-  "name": "EduGhana: Level-Up Navigator",
-  "description": "A comprehensive digital companion for students in Ghana's Colleges of Education, specifically designed to bridge the curriculum gap between Level 100 and Level 200 with AI tutoring and resource tracking.",
-  "requestFramePermissions": [
-    "microphone",
-    "camera",
-    "geolocation"
-  ]
-}
