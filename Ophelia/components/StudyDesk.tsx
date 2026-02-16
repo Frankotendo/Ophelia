@@ -41,10 +41,11 @@ const StudyDesk: React.FC<StudyDeskProps> = ({ onTopicSelect, onSaveNote, onStud
         
         const result = await getTutorResponse(prompt, [], { data: base64, mimeType });
         
+        const responseText = result.text || "";
         // Parse level and clean text
-        const levelMatch = result.text.match(/\[LEVEL: (\d+)\]/);
+        const levelMatch = responseText.match(/\[LEVEL: (\d+)\]/);
         const detectedLevel = levelMatch ? `Level ${levelMatch[1]}` as Level : Level.L100;
-        const cleanAnalysis = result.text.replace(/\[LEVEL: \d+\]/, '').trim();
+        const cleanAnalysis = responseText.replace(/\[LEVEL: \d+\]/, '').trim();
         
         setAssignedLevel(detectedLevel);
         setAnalysis(cleanAnalysis);
@@ -127,7 +128,6 @@ const StudyDesk: React.FC<StudyDeskProps> = ({ onTopicSelect, onSaveNote, onStud
           )}
         </div>
 
-        {/* Right Column: Auntie's Encouragement */}
         <div className="space-y-8 flex flex-col justify-center">
           <div className="bg-gradient-to-br from-rose-500 to-pink-600 p-12 rounded-[4rem] text-white shadow-2xl relative overflow-hidden group">
             <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-150 transition-transform duration-1000">
